@@ -252,7 +252,9 @@ export function ShipShapeForm() {
           Your shipment has been successfully registered in our national database.
         </p>
 
-        <div className="bg-primary/5 p-6 sm:p-12 rounded-xl sm:rounded-[2.5rem] border border-primary/10 mb-8 sm:mb-12 relative group mx-4">
+        <div
+          className="bg-primary/5 p-6 sm:p-12 rounded-xl sm:rounded-[2.5rem] border border-primary/10 mb-8 sm:mb-12 relative group mx-4"
+        >
           <p className="text-[8px] sm:text-[10px] font-black text-primary uppercase mb-3 tracking-[0.4em]">Reference ID</p>
           <p className="font-mono text-2xl sm:text-5xl font-black text-primary tracking-widest group-hover:scale-105 transition-transform">
             #{confirmationId}
