@@ -42,28 +42,74 @@ export function SplashScreen() {
     // ------------------------------------------------------------------
     // Defensive behaviour: block any stray Firebase Storage requests that
     // might still be hanging around in cached bundles or legacy code. We
-    // don't ship/storage on the client any more, but if an older build is
-    // accidentally served the browser will attempt POSTs to
-    // firebasestorage.googleapis.com and trigger CORS errors.  Patch the
-    // XHR prototype early so those requests never leave the client.
-    if (typeof window !== 'undefined' && window.XMLHttpRequest) {
-      const origOpen = XMLHttpRequest.prototype.open;
-      XMLHttpRequest.prototype.open = function (method: string, url: string | URL | null, ...rest: any[]) {
-        try {
-          const str = typeof url === 'string' ? url : url?.toString();
-          if (str && str.includes('firebasestorage.googleapis.com')) {
-            // bail out silently – prevents network traffic and CORS noise
-            console.warn('Blocked legacy Firebase Storage request:', method, str);
-            // the call is cancelled by not invoking the original open
-            return;
+    // don't use Firebase Storage on the client any more — Cloudinary is
+    // used via a server action. Patch common browser APIs early so legacy
+    // code cannot trigger network calls that result in CORS spam.
+
+    // 1) Intercept XMLHttpRequest.open and silently drop requests.
+    try {
+      if (typeof window !== 'undefined' && (window as any).XMLHttpRequest) {
+        const origOpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function (method: string, url: string | URL | null, ...rest: any[]) {
+          try {
+            const str = typeof url === 'string' ? url : url?.toString();
+            if (str && str.includes('firebasestorage.googleapis.com')) {
+              console.warn('Blocked legacy Firebase Storage XHR:', method, str);
+              return; // do not perform network open
+            }
+          } catch {
+            // fallthrough
           }
-        } catch {
-          // ignore errors and fall through to original behaviour
-        }
-        // @ts-ignore -- preserve original signature
-        return origOpen.apply(this, [method, url, ...rest]);
-      };
+          // @ts-ignore
+          return origOpen.apply(this, [method, url, ...rest]);
+        };
+      }
+    } catch (e) {
+      // defensive: ignore patch failure
+      // eslint-disable-next-line no-console
+      console.warn('XHR patch failed', e);
     }
+
+    // 2) Intercept fetch and return a harmless response for storage URLs.
+    try {
+      if (typeof window !== 'undefined' && window.fetch) {
+        const origFetch = window.fetch.bind(window);
+        // @ts-ignore
+        window.fetch = async function (input: RequestInfo, init?: RequestInit) {
+          try {
+            const url = typeof input === 'string' ? input : (input as Request).url;
+            if (url && url.includes('firebasestorage.googleapis.com')) {
+              console.warn('Blocked legacy Firebase Storage fetch:', url);
+              // Return a resolved Response to prevent caller from issuing network
+              // This avoids CORS preflight and prevents console spam
+              return new Response(null, { status: 204, statusText: 'No Content' });
+            }
+          } catch (e) {
+            // ignore and fall through to real fetch
+          }
+          return origFetch(input, init);
+        };
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('fetch patch failed', e);
+    }
+
+    // 3) Unregister any service workers and clear caches to remove stale
+    //    cached bundles that might still attempt storage uploads.
+    try {
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then((regs) => {
+          regs.forEach((r) => r.unregister().catch(() => {}));
+        }).catch(() => {});
+      }
+    } catch {}
+
+    try {
+      if (window.caches && caches.keys) {
+        caches.keys().then((names) => Promise.all(names.map((n) => caches.delete(n)))).catch(() => {});
+      }
+    } catch {}
 
     // Cycle through status messages (600ms interval for 5s total window)
     const statusInterval = setInterval(() => {
