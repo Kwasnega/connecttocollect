@@ -39,6 +39,32 @@ export function SplashScreen() {
     // Handshake required
     setIsVisible(true);
 
+    // ------------------------------------------------------------------
+    // Defensive behaviour: block any stray Firebase Storage requests that
+    // might still be hanging around in cached bundles or legacy code. We
+    // don't ship/storage on the client any more, but if an older build is
+    // accidentally served the browser will attempt POSTs to
+    // firebasestorage.googleapis.com and trigger CORS errors.  Patch the
+    // XHR prototype early so those requests never leave the client.
+    if (typeof window !== 'undefined' && window.XMLHttpRequest) {
+      const origOpen = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function (method: string, url: string | URL | null, ...rest: any[]) {
+        try {
+          const str = typeof url === 'string' ? url : url?.toString();
+          if (str && str.includes('firebasestorage.googleapis.com')) {
+            // bail out silently – prevents network traffic and CORS noise
+            console.warn('Blocked legacy Firebase Storage request:', method, str);
+            // the call is cancelled by not invoking the original open
+            return;
+          }
+        } catch {
+          // ignore errors and fall through to original behaviour
+        }
+        // @ts-ignore -- preserve original signature
+        return origOpen.apply(this, [method, url, ...rest]);
+      };
+    }
+
     // Cycle through status messages (600ms interval for 5s total window)
     const statusInterval = setInterval(() => {
       setStatusIndex((prev) => (prev < statuses.length - 1 ? prev + 1 : prev));
